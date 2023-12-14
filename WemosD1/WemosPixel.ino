@@ -3,23 +3,27 @@
 #include <WiFiUdp.h>
 #include <Arduino.h>
 #include <FastLED.h>
+#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
 #define bytes_to_short(h,l) ( ((h << 8) & 0xff00) | (l & 0x00FF) );
 
 
-// network settings
-static byte mymac[]    = { 0x74,0x69,0x69,0x2D,0x30,0x34};
-	   IPAddress myip  = { 192, 168,   1, 203 };
-	   IPAddress nm    = { 255, 255, 255,   0 };
-
-	   const char* ssid		= "";
-	   const char* password = "";
+// Initial network settings
+byte mymac[]    = {0x01,0x23,0x45,0x67,0x89,0x0F};
+IPAddress myip  = { 0, 0, 0, 0 };      // If first octett is 0 setup will try to optaion DHCP-IP
+IPAddress nm    = { 255, 0, 0,   0 };  
 
 // LED-Output
 const short numLeds_A   = 170; // Change if your setup has more or less LED's
 	  short universe_A  = 0;   //
 #define     DATA_PIN_A    12    //The data pin that the WS2812 strips are connected to.
 CRGB leds_A[numLeds_A];
+
+// LED-Output
+const short numLeds_B   = 170; // Change if your setup has more or less LED's
+	  short universe_B  = 1;   //
+#define     DATA_PIN_B    13    //The data pin that the WS2812 strips are connected to.
+CRGB leds_B[numLeds_B];
 
 WiFiUDP Udp;
 byte data[530];
@@ -48,8 +52,8 @@ char artPollReply[] = {
 				0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	//112
 				0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	//128
 				0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	//144
-				//																								NumPorts		Port-Types
-				0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x01,	0x80,	0x00,	//160
+				//																								                            NumPorts		Port-Types
+				0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x00,	0x02,	0x80,	0x80,	//160
 				//				GoodInput						GoodOutput						SwIn							SwOut
 				0x00,	0x00,	0x80,	0x80,	0x80,	0x80,	0x80,	0x80,	0x80,	0x80,	0x01,	0x02,	0x03,	0x04,	0x00,	0x01,	//176
 				//				SwVideo	SwMacro	SwRemo	Spare							Mac													  IP
@@ -108,8 +112,8 @@ void myArtnetPacket(int messagelength) {   //messagein prob dont need to use a p
 	}
 }
 
-int universe_number(){
-	return artnet_net * 256 +  artnet_subnet * 16 + universe_A;
+int universe_number(short universe){
+	return artnet_net * 256 +  artnet_subnet * 16 + universe;
 }
 
 /*
@@ -119,13 +123,22 @@ Reads data directly from the packetBuffer and sends straight out
 void updatePixels()
 {
 	short universe = bytes_to_short(data[15],data[14]);
-	if(universe == universe_number()){
+	if(universe == universe_number(universe_A)){
 		for(short i = 0; i < numLeds_A; i++){
 			short dmx = 3*i;
 			short r = bytes_to_short(byte(0), data[dmx+18]);
 			short g = bytes_to_short(byte(0), data[dmx+19]);
 			short b = bytes_to_short(byte(0), data[dmx+20]);
 			leds_A[i] = CRGB(r,g,b);
+		}
+	}
+	if(universe == universe_number(universe_B)){
+		for(short i = 0; i < numLeds_B; i++){
+			short dmx = 3*i;
+			short r = bytes_to_short(byte(0), data[dmx+18]);
+			short g = bytes_to_short(byte(0), data[dmx+19]);
+			short b = bytes_to_short(byte(0), data[dmx+20]);
+			leds_B[i] = CRGB(r,g,b);
 		}
 	}
 	FastLED.show();
@@ -156,9 +169,15 @@ void answerPoll(){
 	for(int i = 108; i <= 171; i++){
 		artPollReply[i] = nodereport[i-108];
 	}
+	//Set MAC
+	for(int i = 201; i <= 206; i++){
+		artPollReply[i] = mymac[i-201];
+	}
+  Serial.println();
 	artPollReply[18] = artnet_net;
 	artPollReply[19] = artnet_subnet;
 	artPollReply[190]= universe_A;
+	artPollReply[191]= universe_B;
 
 	delay(10);
 
@@ -166,6 +185,9 @@ void answerPoll(){
 	Udp.write(artPollReply, sizeof artPollReply);
 	Udp.endPacket();
 
+}
+String printIP(const IPAddress& address){
+  return String() + address[0] + "." + address[1] + "." + address[2] + "." + address[3];
 }
 void setIp()
 {
@@ -175,18 +197,15 @@ void setIp()
 		nm = IPAddress(data[20], data[21], data[22], data[23]);
 	}
 
-	Serial.println("New IP");
-	Serial.println(myip.toString().c_str());
-
-	WiFi.disconnect();
-	if(myip.isSet()){
-		WiFi.config(myip, myip, nm);
-	}
-	WiFi.begin(ssid, password);
-	Udp.begin(6454);
+	Serial.print("New IP: ");
+	Serial.println(String() + data[16]+ "." +data[17]+ "." +data[18]+ "." +data[19]);
 
 	eeprom_store_values();
 	answerPoll();
+
+  Serial.println("Restarting System");
+  delay(100);
+  ESP.restart();
 }
 void setUniverse()
 {
@@ -200,6 +219,9 @@ void setUniverse()
 	if((data[100] & 0b10000000)  &&  data[100] != 0x7f){
 		universe_A = data[100] & 0b01111111;
 	}
+	if((data[101] & 0b10000000)  &&  data[101] != 0x7f){
+		universe_B = data[101] & 0b01111111;
+	}
 	if(data[14] > 0){
 		for(int i=14;i<32;i++){
 			shortname[i-14] = data[i];
@@ -211,8 +233,10 @@ void setUniverse()
 		}
 	}
 
-	//Serial.print(F("Universe is now "));
-	//Serial.println(universe_number());
+	Serial.print(F("Universe A is now "));
+	Serial.println(universe_number(universe_A));
+	Serial.print(F("Universe B is now "));
+	Serial.println(universe_number(universe_B));
 
 	eeprom_store_values();
 	answerPoll();
@@ -224,63 +248,75 @@ void eeprom_read_values(){
 	EEPROM.get( 20, artnet_net);
 	EEPROM.get( 30, artnet_subnet);
 	EEPROM.get( 40, universe_A);
+	EEPROM.get( 42, universe_B);
 	EEPROM.get( 50, shortname);
 	EEPROM.get(100, longname);
 }
 void eeprom_store_values(){
+  Serial.println("Storing values");
+  Serial.print("MyIP: ");
+  Serial.println(String() + myip[0]+ "." +myip[1]+ "." +myip[2]+ "." +myip[3]);
 	EEPROM.put(  0, myip);
 	EEPROM.put( 10, nm);
 	EEPROM.put( 20, artnet_net);
 	EEPROM.put( 30, artnet_subnet);
 	EEPROM.put( 40, universe_A);
+	EEPROM.put( 42, universe_B);
 	EEPROM.put( 50, shortname);
 	EEPROM.put(100, longname);
 	EEPROM.commit();
 }
 
 void setup () {
-	EEPROM.begin(200);
 	Serial.begin(115200);
+	EEPROM.begin(256);
 
 	Serial.println(F(" -- [ WemosPixel 2 ] -- "));
 	Serial.println(F("Connecting to WiFi..."));
+  
+  //WiFiManager, Local intialization. Once its business is done, there is no need to keep it around
+  WiFiManager wm;
 
-	pinMode(2, INPUT);
-	if(digitalRead(2)){
+	pinMode(4, INPUT);
+  delay(100); //Needed to settle voltages for digitalRead
+	if(digitalRead(4)){
+    // reset settings - wipe stored credentials for testing
+    // these are stored by the esp library
+    Serial.println("RESETTING");
 		eeprom_store_values();
+    wm.resetSettings();
 	}else{
+    Serial.println("USE STORED VALUES");
 		eeprom_read_values();
 	}
+  if(myip[0] > 0){
+	  wm.setSTAStaticIPConfig(myip, myip, nm); // optional DNS 4th argument
+  }
 
-	boolean state = true;
-	int i = 0;
-
-	WiFi.macAddress(mymac);
-	if(myip.isSet()){
-		WiFi.config(myip, myip, nm);
-	}
-
-	WiFi.begin(ssid, password);
-	while (WiFi.status() != WL_CONNECTED) {
-		delay(500);
-		Serial.print(".");
-		if (i > 20){
-			state = false;
-			break;
-		}
-		i++;
-	}
+  bool res = wm.autoConnect(); 
+  if(!res){
+    Serial.println("Failed to connect");
+    //ESP.restart();
+  }else{
+    Serial.println("connected to wifi! yay :)");
+  }
 
 	Udp.begin(6454);
 
-    Serial.print(F("IP address: "));
-    Serial.println(WiFi.localIP());
+  Serial.print(F("IP address: "));
+  Serial.println(WiFi.localIP());
+  //Store MyMac for ArtPollReply packages
+  WiFi.macAddress(mymac);
+
+  Serial.println("MAC: "+WiFi.macAddress());
 
 	FastLED.addLeds<WS2812, DATA_PIN_A, GRB>(leds_A, numLeds_A);
+	FastLED.addLeds<WS2812, DATA_PIN_B, GRB>(leds_B, numLeds_B);
 }
 
 void loop () {
 	int packetSize = Udp.parsePacket();
+  int i = 0;
 	if (packetSize)
 	{
 		//Serial.printf("Received %d bytes from %s, port %d\n", packetSize, Udp.remoteIP().toString().c_str(), Udp.remotePort());
