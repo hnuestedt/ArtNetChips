@@ -21,7 +21,7 @@ Ansteuerung eines Pixel-LED-Streifens (WS2812B) mit drei Betriebsmodi und Webobe
 |---|---|
 | LED-Daten (WS2812B) | GPIO 2 |
 | Reset-Taster (gegen GND) | GPIO 9 |
-| Serielle Konsole (Debug, optional) | TX GPIO 21, RX GPIO 20 (115200 Baud) |
+| Serielle Konsole (Debug) | USB-C (USB-Serial-JTAG, 115200 Baud) |
 | Spannungsversorgung Streifen | 5 V extern, gemeinsame GND |
 
 > Hinweis: Der ESP32-C3 liefert max. 500 mA auf 3,3 V / 5 V USB. Bei mehr als ~10–15 Pixeln sollte der Streifen ueber ein eigenes 5V-Netzteil versorgt werden, damit der ESP nicht browning out. FastLED ist auf 5V/500mA ueber `setMaxPowerInVoltsAndMilliamps` begrenzt.
