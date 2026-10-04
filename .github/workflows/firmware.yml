@@ -8,9 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 jobs:
   build:
@@ -43,23 +41,14 @@ jobs:
           name: esp32c3-firmware
           path: ESP32C3-PixelArtNet/release/*
           if-no-files-found: error
-      - name: Stage web flasher pages
-        if: github.event_name != 'pull_request'
+      - name: Publish flasher page to /docs
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
-          mkdir -p webdeploy
-          cp -r ../web/* webdeploy/
-          sed -i "s/\"version\": \"\"/\"version\": \"${GITHUB_SHA::7}\"/" webdeploy/manifest.json
-          cp release/firmware-esp32c3-full.bin webdeploy/
-          cp release/checksums.txt webdeploy/
-      - name: Configure GitHub Pages
-        if: github.event_name != 'pull_request'
-        uses: actions/configure-pages@v5
-      - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ESP32C3-PixelArtNet/webdeploy
-      - name: Deploy to GitHub Pages
-        if: github.event_name != 'pull_request'
-        id: deployment
-        uses: actions/deploy-pages@v4
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp release/firmware-esp32c3-full.bin ../docs/
+          cp release/checksums.txt ../docs/
+          sed -i "s/\"version\": \"\"/\"version\": \"${GITHUB_SHA::7}\"/" ../docs/manifest.json
+          git add ../docs
+          git commit -m "Update firmware binaries for ${GITHUB_SHA::7}" || echo "No changes"
+          git push
