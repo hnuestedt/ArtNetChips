@@ -49,6 +49,11 @@ void ConfigServer::begin(bool startAP) {
     if (startAP) {
         apSsid = String(AP_SSID_BASE) + String((uint32_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
         WiFi.mode(WIFI_AP_STA);
+        // AP-Interface statisch konfigurieren, bevor softAP startet
+        // (sorgt dafuer, dass der lwIP-DHCP-Server fuer Clients sauber hochkommt)
+        IPAddress apIp(192, 168, 4, 1);
+        IPAddress apNetmask(255, 255, 255, 0);
+        WiFi.softAPConfig(apIp, apIp, apNetmask);
         WiFi.softAP(apSsid.c_str(), AP_PASSWORD);
         delay(100);
         dns.start(53, "*", WiFi.softAPIP());
