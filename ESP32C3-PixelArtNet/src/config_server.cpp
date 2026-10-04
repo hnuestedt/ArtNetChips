@@ -103,39 +103,61 @@ static void registerWiFiEvents() {
     });
 }
 
+// Prueft, ob das AP-Netzwerkinterface wirklich funktioniert:
+// AP-IP gesetzt + DHCP-Server gestartet. Beim Core-Bug (arduino-esp32 #7232)
+// assoziieren Clients zwar, aber das Interface steht nicht (keine IP, kein DHCP, kein TCP).
+static bool apNetifHealthy() {
+    IPAddress apIp = WiFi.softAPIP();
+    bool hasIp = (apIp != IPAddress(0, 0, 0, 0)) && (apIp != IPAddress(255, 255, 255, 255));
+    esp_netif_t* apNetif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    esp_netif_dhcp_status_t dhcpsStatus = ESP_NETIF_DHCP_INIT;
+    bool dhcpsOk = false;
+    if (apNetif && esp_netif_dhcps_get_status(apNetif, &dhcpsStatus) == ESP_OK) {
+        dhcpsOk = (dhcpsStatus == ESP_NETIF_DHCP_STARTED);
+    }
+    Serial.printf("[AP] Health: IP=%s DHCP=%d -> %s\n",
+                  apIp.toString().c_str(), (int)dhcpsStatus,
+                  (hasIp && dhcpsOk) ? "OK" : "DEFEKT");
+    return hasIp && dhcpsOk;
+}
+
 void ConfigServer::beginPortal() { begin(true); }
 
 void ConfigServer::begin(bool startAP) {
     registerWiFiEvents();
     if (startAP) {
         apSsid = String(AP_SSID_BASE) + String((uint32_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
-        WiFi.mode(WIFI_AP_STA);
-        // AP-Interface statisch konfigurieren, bevor softAP startet
-        // (sorgt dafuer, dass der lwIP-DHCP-Server fuer Clients sauber hochkommt)
         IPAddress apIp(192, 168, 4, 1);
         IPAddress apNetmask(255, 255, 255, 0);
-        bool cfgOk = WiFi.softAPConfig(apIp, apIp, apNetmask);
-        Serial.printf("[AP] softAPConfig() Erg: %d\n", (int)cfgOk);
-        if (!cfgOk) {
-            Serial.println("[AP] FEHLER: softAPConfig fehlgeschlagen!");
+
+        // Bis zu 3 Versuche mit komplett sauberem WiFi-Neustart dazwischen.
+        // Umgeht den Core-Bug (arduino-esp32 #7232): nach einem vorherigen
+        // STA-Versuch startet das AP-Interface sichtbar, aber ohne funktionierendes TCP/IP.
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            Serial.printf("[AP] Startversuch %d/3\n", attempt);
+            WiFi.mode(WIFI_AP);
+            bool cfgOk = WiFi.softAPConfig(apIp, apIp, apNetmask);
+            Serial.printf("[AP] softAPConfig() Erg: %d\n", (int)cfgOk);
+            // Kanal 1 explizit waehlen
+            bool apOk = WiFi.softAP(apSsid.c_str(), AP_PASSWORD, 1, 0, 4);
+            Serial.printf("[AP] softAP() Erg: %d  SSID: '%s'  Kanal: %d  MAC: %s\n",
+                          (int)apOk, apSsid.c_str(), WiFi.channel(),
+                          WiFi.softAPmacAddress().c_str());
+            delay(500);
+            if (apNetifHealthy()) break;
+            Serial.println("[AP] Interface defekt -> WiFi komplett neu starten");
+            WiFi.softAPdisconnect(true);
+            WiFi.mode(WIFI_OFF);
+            delay(1000);
+            if (attempt == 3) {
+                Serial.println("[AP] FEHLER: AP-Interface bleibt defekt nach 3 Versuchen!");
+            }
         }
-        // Kanal 1 explizit waehlen + max. Sendeleistung
-        bool apOk = WiFi.softAP(apSsid.c_str(), AP_PASSWORD, 1, 0, 4);
-        Serial.printf("[AP] softAP() Erg: %d  SSID: '%s'  Kanal: %d\n",
-                      (int)apOk, apSsid.c_str(), WiFi.channel());
-        Serial.printf("[AP] IP: %s  MAC: %s\n",
-                      WiFi.softAPIP().toString().c_str(), WiFi.softAPmacAddress().c_str());
-        delay(200);
+
         dns.start(53, "*", WiFi.softAPIP());
         apActive = true;
-        esp_netif_t* apNetif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
-        esp_netif_dhcp_status_t dhcpsStatus;
-        if (apNetif && esp_netif_dhcps_get_status(apNetif, &dhcpsStatus) == ESP_OK) {
-            Serial.printf("[AP] DHCP-Server-Status: %d (0=INIT,1=STARTED)\n", (int)dhcpsStatus);
-        } else {
-            Serial.println("[AP] WARNUNG: DHCP-Server-Status nicht abfragbar!");
-        }
-        Serial.printf("[AP] DNS-Captive-Portal aktiv\n");
+        Serial.printf("[AP] DNS-Captive-Portal aktiv, IP: %s\n",
+                      WiFi.softAPIP().toString().c_str());
     } else {
         WiFi.mode(WIFI_STA);
         apActive = false;
