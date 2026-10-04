@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <esp_wifi.h>
 #include <tcpip_adapter.h>
+#include <esp_netif.h>
 #include "config_server.h"
 
 const char* ConfigServer::AP_SSID_BASE = "PixelSetup-";
@@ -113,7 +114,11 @@ void ConfigServer::begin(bool startAP) {
         // (sorgt dafuer, dass der lwIP-DHCP-Server fuer Clients sauber hochkommt)
         IPAddress apIp(192, 168, 4, 1);
         IPAddress apNetmask(255, 255, 255, 0);
-        WiFi.softAPConfig(apIp, apIp, apNetmask);
+        bool cfgOk = WiFi.softAPConfig(apIp, apIp, apNetmask);
+        Serial.printf("[AP] softAPConfig() Erg: %d\n", (int)cfgOk);
+        if (!cfgOk) {
+            Serial.println("[AP] FEHLER: softAPConfig fehlgeschlagen!");
+        }
         // Kanal 1 explizit waehlen + max. Sendeleistung
         bool apOk = WiFi.softAP(apSsid.c_str(), AP_PASSWORD, 1, 0, 4);
         Serial.printf("[AP] softAP() Erg: %d  SSID: '%s'  Kanal: %d\n",
@@ -123,7 +128,14 @@ void ConfigServer::begin(bool startAP) {
         delay(200);
         dns.start(53, "*", WiFi.softAPIP());
         apActive = true;
-        Serial.printf("[AP] DHCP laeuft, DNS-Captive-Portal aktiv\n");
+        esp_netif_t* apNetif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        esp_netif_dhcp_status_t dhcpsStatus;
+        if (apNetif && esp_netif_dhcps_get_status(apNetif, &dhcpsStatus) == ESP_OK) {
+            Serial.printf("[AP] DHCP-Server-Status: %d (0=INIT,1=STARTED)\n", (int)dhcpsStatus);
+        } else {
+            Serial.println("[AP] WARNUNG: DHCP-Server-Status nicht abfragbar!");
+        }
+        Serial.printf("[AP] DNS-Captive-Portal aktiv\n");
     } else {
         WiFi.mode(WIFI_STA);
         apActive = false;
@@ -131,6 +143,7 @@ void ConfigServer::begin(bool startAP) {
     if (!MDNS.begin(mdnsName.c_str())) Serial.println("mDNS Fehler");
     registerRoutes();
     server.begin();
+    Serial.printf("[Web] HTTP-Server auf Port %d gestartet\n", 80);
 }
 
 void ConfigServer::stop() {

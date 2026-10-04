@@ -196,24 +196,46 @@ void renderAuto() {
 }
 
 // ------------------------- WiFi / Setup -------------------------
-void connectWiFi() {
-    if (WiFi.SSID().isEmpty()) {
-        // Interne, in NVS gespeicherte Credentials verwenden (WiFi.setAutoConnect)
-        wifi_config_t conf;
-        memset(&conf, 0, sizeof(conf));
-        if (esp_wifi_get_config(WIFI_IF_STA, &conf) != ESP_OK ||
-            conf.sta.ssid[0] == 0) {
-            return;
-        }
+// true, wenn gespeicherte STA-Credentials in NVS vorhanden sind
+static bool hasStoredCredentials() {
+    wifi_config_t conf;
+    memset(&conf, 0, sizeof(conf));
+    if (esp_wifi_get_config(WIFI_IF_STA, &conf) != ESP_OK) {
+        Serial.println("[WiFi] esp_wifi_get_config fehlgeschlagen");
+        return false;
     }
+    bool has = conf.sta.ssid[0] != 0;
+    Serial.printf("[WiFi] Gespeicherte SSID: '%s' (Laenge %d)\n",
+                  (const char*)conf.sta.ssid, (int)strlen((const char*)conf.sta.ssid));
+    return has;
+}
+
+bool connectWiFi() {
+    if (!hasStoredCredentials()) {
+        Serial.println("[WiFi] Keine Credentials gespeichert -> kein STA-Versuch");
+        return false;
+    }
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
     WiFi.begin();
-    Serial.print("Verbinde mit gespeichertem WLAN");
+    Serial.printf("[WiFi] Verbinde mit gespeichertem WLAN (Timeout 15 s)\n");
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
         delay(250);
         Serial.print(".");
     }
     Serial.println();
+    bool ok = (WiFi.status() == WL_CONNECTED);
+    if (!ok) {
+        Serial.printf("[WiFi] STA-Verbindung fehlgeschlagen (Status %d)", (int)WiFi.status());
+        Serial.println(" -> WiFi.stop() fuer sauberen AP-Start");
+        // Wichtig: WiFi sauber stoppen, sonst startet der AP-Mode mit
+        // defektem TCP/IP-Interface (bekannter Core-Bug, arduino-esp32 #7232)
+        WiFi.disconnect(true, true);
+        WiFi.mode(WIFI_OFF);
+        delay(500);
+    }
+    return ok;
 }
 
 void setup() {
@@ -225,14 +247,13 @@ void setup() {
     g_store.begin();
     g_store.load(g_cfg);
 
-    // WiFi zuerst starten (lwIP initialisieren), erst danach ArtNet/UDP
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    connectWiFi();
+    // WiFi zuerst starten (lwIP initialisieren), erst danach ArtNet/UDP.
+    // Ohne gespeicherte Credentials direkt in den AP-Modus (Core-Bug #7232 umgehen).
+    bool staOk = connectWiFi();
 
     applyRuntimeConfig();
 
-    if (WiFi.status() == WL_CONNECTED) {
+    if (staOk) {
         Serial.printf("WLAN verbunden: %s  IP: %s\n", WiFi.SSID().c_str(),
                       WiFi.localIP().toString().c_str());
         g_server.begin(false);
