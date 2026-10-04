@@ -51,7 +51,7 @@ void artnetUnsubscribeAll() {
 }
 
 void setupArtnetIfNeeded() {
-    if (g_cfg.mode != MODE_ARTNET) {
+    if (g_cfg.mode != MODE_ARTNET || WiFi.status() != WL_CONNECTED) {
         if (artnetActive) {
             artnetUnsubscribeAll();
             artnetActive = false;
@@ -224,11 +224,13 @@ void setup() {
 
     g_store.begin();
     g_store.load(g_cfg);
-    applyRuntimeConfig();
 
+    // WiFi zuerst starten (lwIP initialisieren), erst danach ArtNet/UDP
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     connectWiFi();
+
+    applyRuntimeConfig();
 
     if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("WLAN verbunden: %s  IP: %s\n", WiFi.SSID().c_str(),
