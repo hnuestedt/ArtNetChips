@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_wifi.h>
+#include <tcpip_adapter.h>
 #include "config_server.h"
 
 const char* ConfigServer::AP_SSID_BASE = "PixelSetup-";
@@ -43,9 +44,68 @@ function segChange(){
 document.addEventListener('DOMContentLoaded',()=>{modeChange();segChange();});
 </script></body></html>)html";
 
+// Menschenlesbare Disconnect-Reasons (ieee80211RechStatus)
+static const char* wifiReasonStr(uint8_t r) {
+    switch (r) {
+        case 1:  return "WLAN nicht gefunden (SSID falsch?)";
+        case 2:  return "Auth fehlgeschlagen (Passwort falsch?)";
+        case 3:  return "Verbindung getrennt (AP zu weit weg)";
+        case 4:  return "Zeitueberschreitung (Asssic.-Timeout)";
+        case 15: return "4-Wege-Handshake fehlgeschlagen (Passwort falsch)";
+        case 201: return "NO_AP_FOUND (SSID nicht gefunden)";
+        case 202: return "AUTH_FAIL (Passwort falsch)";
+        case 203: return "ASSOC_FAIL";
+        case 204: return "HANDSHAKE_TIMEOUT";
+        case 205: return "CONNECTION_FAIL";
+        default: return "unbekannt";
+    }
+}
+
+static void registerWiFiEvents() {
+    static bool registered = false;
+    if (registered) return;
+    registered = true;
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+        switch (event) {
+            case ARDUINO_EVENT_WIFI_STA_START:
+                Serial.printf("[WiFi] STA gestartet\n");
+                break;
+            case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+                Serial.printf("[WiFi] STA verbunden mit SSID '%s'\n",
+                              info.wifi_sta_connected.ssid);
+                break;
+            case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
+                Serial.printf("[WiFi] STA getrennt! Grund (%d): %s\n",
+                              info.wifi_sta_disconnected.reason,
+                              wifiReasonStr(info.wifi_sta_disconnected.reason));
+                break;
+            }
+            case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+                Serial.printf("[WiFi] STA hat IP: %s (GW: %s)\n",
+                              WiFi.localIP().toString().c_str(),
+                              WiFi.gatewayIP().toString().c_str());
+                break;
+            case ARDUINO_EVENT_WIFI_AP_START:
+                Serial.println("[WiFi] AP gestartet");
+                break;
+            case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+                Serial.println("[WiFi] AP: Client verbunden");
+                break;
+            case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+                Serial.println("[WiFi] AP: Client getrennt");
+                break;
+            case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
+                Serial.println("[WiFi] AP: DHCP-IP an Client vergeben");
+                break;
+            default: break;
+        }
+    });
+}
+
 void ConfigServer::beginPortal() { begin(true); }
 
 void ConfigServer::begin(bool startAP) {
+    registerWiFiEvents();
     if (startAP) {
         apSsid = String(AP_SSID_BASE) + String((uint32_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
         WiFi.mode(WIFI_AP_STA);
@@ -54,12 +114,16 @@ void ConfigServer::begin(bool startAP) {
         IPAddress apIp(192, 168, 4, 1);
         IPAddress apNetmask(255, 255, 255, 0);
         WiFi.softAPConfig(apIp, apIp, apNetmask);
-        WiFi.softAP(apSsid.c_str(), AP_PASSWORD);
-        delay(100);
+        // Kanal 1 explizit waehlen + max. Sendeleistung
+        bool apOk = WiFi.softAP(apSsid.c_str(), AP_PASSWORD, 1, 0, 4);
+        Serial.printf("[AP] softAP() Erg: %d  SSID: '%s'  Kanal: %d\n",
+                      (int)apOk, apSsid.c_str(), WiFi.channel());
+        Serial.printf("[AP] IP: %s  MAC: %s\n",
+                      WiFi.softAPIP().toString().c_str(), WiFi.softAPmacAddress().c_str());
+        delay(200);
         dns.start(53, "*", WiFi.softAPIP());
         apActive = true;
-        Serial.printf("AP aktiv: %s  IP: %s\n", apSsid.c_str(),
-                      WiFi.softAPIP().toString().c_str());
+        Serial.printf("[AP] DHCP laeuft, DNS-Captive-Portal aktiv\n");
     } else {
         WiFi.mode(WIFI_STA);
         apActive = false;
@@ -80,7 +144,25 @@ void ConfigServer::stop() {
 
 bool ConfigServer::isAPActive() { return apActive; }
 void ConfigServer::handleClient() {
-    if (apActive) dns.processNextRequest();
+    if (apActive) {
+        dns.processNextRequest();
+        // Periodischer Status-Log: alle 10 s, damit sichtbar bleibt, dass der AP lebt
+        static uint32_t lastStatus = 0;
+        uint32_t now = millis();
+        if (now - lastStatus > 10000) {
+            lastStatus = now;
+            wifi_sta_list_t staList;
+            if (esp_wifi_ap_get_sta_list(&staList) == ESP_OK) {
+                Serial.printf("[AP-Status] SSID '%s' Kanal %d, %d Client(s) verbunden, "
+                              "Heap frei: %u\n",
+                              apSsid.c_str(), WiFi.channel(),
+                              (int)staList.num, ESP.getFreeHeap());
+            } else {
+                Serial.printf("[AP-Status] SSID '%s' Heap frei: %u\n",
+                              apSsid.c_str(), ESP.getFreeHeap());
+            }
+        }
+    }
     server.handleClient();
 }
 
