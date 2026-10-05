@@ -77,6 +77,10 @@ static void registerWiFiEvents() {
             case ARDUINO_EVENT_WIFI_STA_CONNECTED:
                 Serial.printf("[WiFi] STA verbunden mit SSID '%s'\n",
                               info.wifi_sta_connected.ssid);
+                // Power-Save im STA-Modus deaktivieren: Der C3 schlaeft sonst
+                // zwischen Beacons und verpasst bei schwachem Signal Frames ->
+                // Router trennt (ASSOC_LEAVE), Reconnect-Handshake schlaegt fehl.
+                esp_wifi_set_ps(WIFI_PS_NONE);
                 break;
             case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
                 Serial.printf("[WiFi] STA getrennt! Grund (%d): %s\n",
@@ -84,7 +88,11 @@ static void registerWiFiEvents() {
                               wifiReasonStr(info.wifi_sta_disconnected.reason));
                 // Auto-Reconnect des Cores nach 5 Fehlversuchen stoppen:
                 // sonst endlose Schleife (z. B. falsches Passwort).
-                if (++staFailCount >= STA_MAX_FAILS && WiFi.getMode() & WIFI_STA) {
+                // Grund 8 (ASSOC_LEAVE) zaehlt nicht als Fehlversuch: Das ist
+                // ein normaler Verbindungsabbruch (z. B. Router-Sidekick oder
+                // Signal), kein Auth-/Assoziationsfehler.
+                if (info.wifi_sta_disconnected.reason != 8 &&
+                    ++staFailCount >= STA_MAX_FAILS && WiFi.getMode() & WIFI_STA) {
                     Serial.printf("[WiFi] %u Fehlversuche -> STA stoppen, zurueck zum AP\n",
                                   (unsigned)staFailCount);
                     WiFi.setAutoReconnect(false);
