@@ -96,7 +96,9 @@ static void registerWiFiEvents() {
                     Serial.printf("[WiFi] %u Fehlversuche -> STA stoppen, zurueck zum AP\n",
                                   (unsigned)staFailCount);
                     WiFi.setAutoReconnect(false);
-                    WiFi.disconnect(false, true);
+                    // disconnect(false, false): Credentials in NVS NICHT loeschen,
+                    // sonst ist nach einem Fehlversuch die Konfig weg.
+                    WiFi.disconnect(false, false);
                     WiFi.mode(WIFI_AP);
                     staFailCount = 0;
                 }
