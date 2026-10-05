@@ -134,16 +134,6 @@ void ConfigServer::begin(bool startAP) {
         // Bis zu 3 Versuche mit komplett sauberem WiFi-Neustart dazwischen.
         // Umgeht den Core-Bug (arduino-esp32 #7232): nach einem vorherigen
         // STA-Versuch startet das AP-Interface sichtbar, aber ohne funktionierendes TCP/IP.
-        // Power-Save deaktivieren: Der C3 senkt sonst die Beacon-/TX-Leistung,
-        // was aeussert so aussieht wie ein unsichtbarer AP.
-        esp_wifi_set_ps(WIFI_PS_NONE);
-        // Sendeleistung explizit auf Maximum (78 = 19,5 dBm)
-        esp_wifi_set_max_tx_power(78);
-        int8_t txPower = 0;
-        esp_wifi_get_max_tx_power(&txPower);
-        Serial.printf("[AP] TX-Power: %d (%.1f dBm), PowerSave aus\n",
-                      (int)txPower, txPower / 4.0f);
-
         const int channels[] = {1, 6, 11};
         for (int attempt = 1; attempt <= 3; attempt++) {
             int chan = channels[attempt - 1];
@@ -155,6 +145,15 @@ void ConfigServer::begin(bool startAP) {
             Serial.printf("[AP] softAP() Erg: %d  SSID: '%s'  Kanal: %d  MAC: %s\n",
                           (int)apOk, apSsid.c_str(), WiFi.channel(),
                           WiFi.softAPmacAddress().c_str());
+            // Power-Save und TX-Power erst NACH WiFi-Start setzen:
+            // esp_wifi_set_ps/set_max_tx_power liefern vorher ESP_ERR_WIFI_STATE
+            // und die TX-Power bleibt auf 0 dBm -> unsichtbarer AP.
+            esp_err_t psErr = esp_wifi_set_ps(WIFI_PS_NONE);
+            esp_err_t txErr = esp_wifi_set_max_tx_power(78);
+            int8_t txPower = 0;
+            esp_wifi_get_max_tx_power(&txPower);
+            Serial.printf("[AP] PowerSave aus (Erg %d), TX-Power setzen Erg %d: %d (%.1f dBm)\n",
+                          (int)psErr, (int)txErr, (int)txPower, txPower / 4.0f);
             delay(500);
             if (apNetifHealthy()) break;
             Serial.println("[AP] Interface defekt -> WiFi komplett neu starten");
