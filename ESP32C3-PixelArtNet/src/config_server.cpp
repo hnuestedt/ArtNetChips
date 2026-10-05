@@ -67,6 +67,8 @@ static void registerWiFiEvents() {
     static bool registered = false;
     if (registered) return;
     registered = true;
+    static uint32_t staFailCount = 0;
+    static const uint32_t STA_MAX_FAILS = 5;
     WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
         switch (event) {
             case ARDUINO_EVENT_WIFI_STA_START:
@@ -80,9 +82,20 @@ static void registerWiFiEvents() {
                 Serial.printf("[WiFi] STA getrennt! Grund (%d): %s\n",
                               info.wifi_sta_disconnected.reason,
                               wifiReasonStr(info.wifi_sta_disconnected.reason));
+                // Auto-Reconnect des Cores nach 5 Fehlversuchen stoppen:
+                // sonst endlose Schleife (z. B. falsches Passwort).
+                if (++staFailCount >= STA_MAX_FAILS && WiFi.getMode() & WIFI_STA) {
+                    Serial.printf("[WiFi] %u Fehlversuche -> STA stoppen, zurueck zum AP\n",
+                                  (unsigned)staFailCount);
+                    WiFi.setAutoReconnect(false);
+                    WiFi.disconnect(false, true);
+                    WiFi.mode(WIFI_AP);
+                    staFailCount = 0;
+                }
                 break;
             }
             case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+                staFailCount = 0;
                 Serial.printf("[WiFi] STA hat IP: %s (GW: %s)\n",
                               WiFi.localIP().toString().c_str(),
                               WiFi.gatewayIP().toString().c_str());
@@ -349,8 +362,19 @@ bool ConfigServer::applyConfigFromForm() {
     g_store.save(g_cfg);
     applyRuntimeConfig();
 
-    if (!ssid.isEmpty() && ssid.length() < 33) {
-        WiFi.begin(ssid.c_str(), pass.isEmpty() ? nullptr : pass.c_str());
+    // WLAN-Credentials nur dann anfassen, wenn der Nutzer sie im Formular
+    // aktiv uebermittelt hat. Leere Felder = unverändert (Platzhalter-Logik),
+    // damit z. B. eine Farbaenderung im statischen Modus die bestehende
+    // WLAN-Verbindung/Konfiguration nicht zerstoert.
+    if (server.hasArg("ssid") && ssid.length() > 0 && ssid.length() < 33) {
+        if (server.hasArg("pass")) {
+            WiFi.setAutoReconnect(true);
+            WiFi.begin(ssid.c_str(), pass.c_str());
+            Serial.printf("[WiFi] Neuer STA-Versuch fuer '%s' (max. 5 Versuche)\n",
+                          ssid.c_str());
+        } else {
+            Serial.println("[WiFi] Passwort-Feld fehlt im Formular -> Credentials unveraendert");
+        }
     }
     return true;
 }
