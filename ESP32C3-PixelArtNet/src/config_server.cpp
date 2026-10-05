@@ -2,6 +2,7 @@
 #include <esp_wifi.h>
 #include <tcpip_adapter.h>
 #include <esp_netif.h>
+#include <esp_wifi_types.h>
 #include "config_server.h"
 
 const char* ConfigServer::AP_SSID_BASE = "PixelSetup-";
@@ -133,13 +134,24 @@ void ConfigServer::begin(bool startAP) {
         // Bis zu 3 Versuche mit komplett sauberem WiFi-Neustart dazwischen.
         // Umgeht den Core-Bug (arduino-esp32 #7232): nach einem vorherigen
         // STA-Versuch startet das AP-Interface sichtbar, aber ohne funktionierendes TCP/IP.
+        // Power-Save deaktivieren: Der C3 senkt sonst die Beacon-/TX-Leistung,
+        // was aeussert so aussieht wie ein unsichtbarer AP.
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        // Sendeleistung explizit auf Maximum (78 = 19,5 dBm)
+        esp_wifi_set_max_tx_power(78);
+        int8_t txPower = 0;
+        esp_wifi_get_max_tx_power(&txPower);
+        Serial.printf("[AP] TX-Power: %d (%.1f dBm), PowerSave aus\n",
+                      (int)txPower, txPower / 4.0f);
+
+        const int channels[] = {1, 6, 11};
         for (int attempt = 1; attempt <= 3; attempt++) {
-            Serial.printf("[AP] Startversuch %d/3\n", attempt);
+            int chan = channels[attempt - 1];
+            Serial.printf("[AP] Startversuch %d/3 (Kanal %d)\n", attempt, chan);
             WiFi.mode(WIFI_AP);
             bool cfgOk = WiFi.softAPConfig(apIp, apIp, apNetmask);
             Serial.printf("[AP] softAPConfig() Erg: %d\n", (int)cfgOk);
-            // Kanal 1 explizit waehlen
-            bool apOk = WiFi.softAP(apSsid.c_str(), AP_PASSWORD, 1, 0, 4);
+            bool apOk = WiFi.softAP(apSsid.c_str(), AP_PASSWORD, chan, 0, 4);
             Serial.printf("[AP] softAP() Erg: %d  SSID: '%s'  Kanal: %d  MAC: %s\n",
                           (int)apOk, apSsid.c_str(), WiFi.channel(),
                           WiFi.softAPmacAddress().c_str());
