@@ -230,8 +230,11 @@ bool connectWiFi() {
         Serial.printf("[WiFi] STA-Verbindung fehlgeschlagen (Status %d)", (int)WiFi.status());
         Serial.println(" -> WiFi.stop() fuer sauberen AP-Start");
         // Wichtig: WiFi sauber stoppen, sonst startet der AP-Mode mit
-        // defektem TCP/IP-Interface (bekannter Core-Bug, arduino-esp32 #7232)
-        WiFi.disconnect(true, true);
+        // defektem TCP/IP-Interface (bekannter Core-Bug, arduino-esp32 #7232).
+        // ABER: disconnect(false, ...) nutzen -- der zweite Parameter 'true'
+        // haette die gespeicherten Credentials aus NVS geloescht!
+        WiFi.persistent(true);
+        WiFi.disconnect(false, false);
         WiFi.mode(WIFI_OFF);
         delay(500);
     }
