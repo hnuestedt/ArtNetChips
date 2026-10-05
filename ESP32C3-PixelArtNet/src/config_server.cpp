@@ -362,11 +362,19 @@ bool ConfigServer::applyConfigFromForm() {
     g_store.save(g_cfg);
     applyRuntimeConfig();
 
-    if (!ssid.isEmpty() && ssid.length() < 33) {
-        WiFi.setAutoReconnect(true);
-        WiFi.begin(ssid.c_str(), pass.isEmpty() ? nullptr : pass.c_str());
-        Serial.printf("[WiFi] Neuer STA-Versuch fuer '%s' (max. 5 Versuche)\n",
-                      ssid.c_str());
+    // WLAN-Credentials nur dann anfassen, wenn der Nutzer sie im Formular
+    // aktiv uebermittelt hat. Leere Felder = unverändert (Platzhalter-Logik),
+    // damit z. B. eine Farbaenderung im statischen Modus die bestehende
+    // WLAN-Verbindung/Konfiguration nicht zerstoert.
+    if (server.hasArg("ssid") && ssid.length() > 0 && ssid.length() < 33) {
+        if (server.hasArg("pass")) {
+            WiFi.setAutoReconnect(true);
+            WiFi.begin(ssid.c_str(), pass.c_str());
+            Serial.printf("[WiFi] Neuer STA-Versuch fuer '%s' (max. 5 Versuche)\n",
+                          ssid.c_str());
+        } else {
+            Serial.println("[WiFi] Passwort-Feld fehlt im Formular -> Credentials unveraendert");
+        }
     }
     return true;
 }
