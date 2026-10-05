@@ -214,14 +214,23 @@ void ConfigServer::handleClient() {
 
 void ConfigServer::registerRoutes() {
     server.on("/", HTTP_GET, [this]() {
-        server.send_P(200, "text/html", PAGE_HEADER);
-        server.sendContent(renderForm());
-        server.sendContent_P(PAGE_FOOTER);
+        // Komplette Seite in einem Stueck senden: send_P + sendContent ohne
+        // korrekte Content-Length llegt bei manchen Clients als leere Antwort an.
+        String page = String(PAGE_HEADER) + renderForm() + String(PAGE_FOOTER);
+        server.send(200, "text/html", page);
     });
-    // Captive-Portal-Umleitungen
-    server.on("/generate_204", HTTP_GET, [this]() { server.sendHeader("Location", "/", true); server.send(302); });
-    server.on("/fwlink", HTTP_GET, [this]() { server.sendHeader("Location", "/", true); server.send(302); });
-    server.on("/hotspot-detect.html", HTTP_GET, [this]() { server.sendHeader("Location", "/", true); server.send(302); });
+    // Einfacher Test-Endpoint ohne HTML, um Raw-Verbindung zu pruefen
+    server.on("/healthz", HTTP_GET, [this]() { server.send(200, "text/plain", "OK"); });
+    // Captive-Portal-Umleitungen: alle ueblichen OS-Probe-Pfade abdecken,
+    // sonst landen sie im 404-Handler und das Portal oeffnet nicht von selbst.
+    const char* probePaths[] = {
+        "/generate_204", "/gen_204", "/fwlink", "/hotspot-detect.html",
+        "/connecttest.txt", "/ncsi.txt", "/library/test/success.html",
+        "/canonical.html", "/validate", "/redirect", "/privacypolicy.pdf"
+    };
+    for (const char* p : probePaths) {
+        server.on(p, HTTP_GET, [this]() { server.sendHeader("Location", "/", true); server.send(302); });
+    }
 
     server.on("/save", HTTP_POST, [this]() {
         if (applyConfigFromForm()) {
@@ -239,7 +248,7 @@ void ConfigServer::registerRoutes() {
     });
 
     server.onNotFound([this]() {
-        if (apActive) { server.sendHeader("Location", "/", true); server.send(302); }
+        if (apActive) { server.sendHeader("Location", "/", true); server.send(302, "text/plain", ""); }
         else server.send(404, "text/plain", "Not Found");
     });
 }
