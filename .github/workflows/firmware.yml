@@ -7,6 +7,12 @@ on:
     paths: ['ESP32C3-PixelArtNet/**']
   workflow_dispatch:
 
+# Verhindert parallele Laeufe auf main: Der Publish-Schritt pusht selbst,
+# ein zweiter Lauf wuerde sonst mit einem nicht-fast-forward-Push abbrechen.
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -51,4 +57,5 @@ jobs:
           sed -i "s/\"version\": \"\"/\"version\": \"${GITHUB_SHA::7}\"/" ../docs/manifest.json
           git add ../docs
           git commit -m "Update firmware binaries for ${GITHUB_SHA::7}" || echo "No changes"
+          git pull --rebase origin main
           git push
