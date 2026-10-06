@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_wifi.h>
+#include <esp_system.h>
 #include <ArtnetWiFi.h>
 #include "config.h"
 #include "config_store.h"
@@ -244,6 +245,9 @@ bool connectWiFi() {
 void setup() {
     Serial.begin(115200);
     delay(200);
+
+    Serial.printf("[Boot] Reset-Ursache: %d (1=Power, 3=Software, 4=Watchdog, 9=panic)\n",
+                  (int)esp_reset_reason());
 
     pinMode(PIN_RESET_BTN, INPUT_PULLUP);
 

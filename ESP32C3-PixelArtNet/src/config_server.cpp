@@ -63,6 +63,8 @@ static const char* wifiReasonStr(uint8_t r) {
     }
 }
 
+static volatile bool apStopRequested = false;
+
 static void registerWiFiEvents() {
     static bool registered = false;
     if (registered) return;
@@ -109,12 +111,15 @@ static void registerWiFiEvents() {
                 Serial.printf("[WiFi] STA hat IP: %s (GW: %s)\n",
                               WiFi.localIP().toString().c_str(),
                               WiFi.gatewayIP().toString().c_str());
-                // AP abschalten, sobald der STA im WLAN ist: Der parallel
-                // laufende AP teilt sich die Airtime desselben Chips und
-                // destabilisiert die STA-Verbindung (Handshake-Timeouts).
+                // AP-Abschalten nur noch als Anforderung markieren: Dieser
+                // Callback laeuft im esp_event-Task des IDF, NICHT im Arduino-
+                // Main-Task. server.stop()/dns.stop()/softAPdisconnect() hier
+                // direkt aufzurufen fuehrt zu Deadlock/Absturz (Chip bootet neu,
+                // USB-Serial re-enumeriert -> Log bricht ab). Ausgefuehrt wird
+                // der Stop in handleClient() im Main-Task.
                 if (g_server.isAPActive()) {
-                    Serial.println("[WiFi] STA verbunden -> AP wird gestoppt");
-                    g_server.stop();
+                    Serial.println("[WiFi] STA verbunden -> AP-Stop angefordert");
+                    apStopRequested = true;
                 }
                 break;
             }
@@ -221,6 +226,12 @@ void ConfigServer::stop() {
 
 bool ConfigServer::isAPActive() { return apActive; }
 void ConfigServer::handleClient() {
+    // AP-Stop (angefordert aus dem WiFi-Event) hier im Main-Task ausfuehren
+    if (apStopRequested && apActive) {
+        apStopRequested = false;
+        Serial.println("[WiFi] AP wird jetzt gestoppt (Main-Task)");
+        stop();
+    }
     if (apActive) {
         dns.processNextRequest();
         // Periodischer Status-Log: alle 10 s, damit sichtbar bleibt, dass der AP lebt
