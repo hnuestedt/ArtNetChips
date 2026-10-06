@@ -213,7 +213,8 @@ void ConfigServer::begin(bool startAP) {
 }
 
 void ConfigServer::stop() {
-    server.stop();
+    // Der HTTP-Server bleibt aktiv: Er ist im STA-Modus unter der STA-IP
+    // weiter erreichbar. server.stop() hier wuerde ihn komplett beenden.
     if (apActive) {
         dns.stop();
         // Interface-Wechsel nur per mode(): softAPdisconnect(true) hier fuehrte
