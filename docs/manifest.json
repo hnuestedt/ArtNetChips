@@ -1,6 +1,6 @@
 {
   "name": "ESP32-C3 Pixel ArtNet",
-  "version": "9c9832d",
+  "version": "a559282",
   "home_assistant_domain": null,
   "funding_url": "https://github.com/hnuestedt/ArtNetChips",
   "new_install_prompt_erase": true,
