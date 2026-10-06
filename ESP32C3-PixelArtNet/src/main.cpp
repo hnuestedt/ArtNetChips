@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_wifi.h>
+#include <nvs.h>
 #include <esp_system.h>
 #include <ArtnetWiFi.h>
 #include "config.h"
@@ -199,16 +200,25 @@ void renderAuto() {
 // ------------------------- WiFi / Setup -------------------------
 // true, wenn gespeicherte STA-Credentials in NVS vorhanden sind
 static bool hasStoredCredentials() {
-    wifi_config_t conf;
-    memset(&conf, 0, sizeof(conf));
-    if (esp_wifi_get_config(WIFI_IF_STA, &conf) != ESP_OK) {
-        Serial.println("[WiFi] esp_wifi_get_config fehlgeschlagen");
-        return false;
+    // esp_wifi_get_config() schlaegt hier fehl (ESP_ERR_WIFI_NOT_INIT):
+    // Der WiFi-Treiber ist vor dem ersten mode()/begin() noch nicht
+    // gestartet. Deshalb die NVS-Keys lesen, in die Arduino die
+    // STA-Credentials speichert (nvs.flash / wifi Konfig).
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open("nvs.net80211", NVS_READONLY, &nvs);
+    if (err == ESP_OK) {
+        char ssid[33] = {0};
+        size_t len = sizeof(ssid);
+        bool has = false;
+        if (nvs_get_str(nvs, "sta.ssid", ssid, &len) == ESP_OK) {
+            has = ssid[0] != 0;
+            Serial.printf("[WiFi] Gespeicherte SSID: '%s'\n", ssid);
+        }
+        nvs_close(nvs);
+        return has;
     }
-    bool has = conf.sta.ssid[0] != 0;
-    Serial.printf("[WiFi] Gespeicherte SSID: '%s' (Laenge %d)\n",
-                  (const char*)conf.sta.ssid, (int)strlen((const char*)conf.sta.ssid));
-    return has;
+    Serial.printf("[WiFi] NVS-Lesefehler: %d -> kein STA-Versuch\n", (int)err);
+    return false;
 }
 
 bool connectWiFi() {
