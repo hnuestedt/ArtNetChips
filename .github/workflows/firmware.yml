@@ -57,7 +57,7 @@ jobs:
           cp release/checksums.txt ../docs/
           cp release/firmware.bin release/firmware-esp32c3-full.bin release/checksums.txt ../release/
           sed -i -E "s/\"version\": \"[^\"]*\"/\"version\": \"${GITHUB_SHA::7}\"/" ../docs/manifest.json
-          git add ../docs
+          git add ../docs ../release
           git commit -m "Update firmware binaries for ${GITHUB_SHA::7}" || echo "No changes"
           git pull --rebase origin main
           git push
