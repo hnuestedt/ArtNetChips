@@ -7,6 +7,7 @@
 
 extern Config g_cfg;
 extern ConfigStore g_store;
+extern class ConfigServer g_server;
 extern void applyRuntimeConfig();
 
 // AP-Mode mit Captive-Portal + Konfig-Weboberflaeche.

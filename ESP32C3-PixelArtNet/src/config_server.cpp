@@ -104,12 +104,20 @@ static void registerWiFiEvents() {
                 }
                 break;
             }
-            case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            case ARDUINO_EVENT_WIFI_STA_GOT_IP: {
                 staFailCount = 0;
                 Serial.printf("[WiFi] STA hat IP: %s (GW: %s)\n",
                               WiFi.localIP().toString().c_str(),
                               WiFi.gatewayIP().toString().c_str());
+                // AP abschalten, sobald der STA im WLAN ist: Der parallel
+                // laufende AP teilt sich die Airtime desselben Chips und
+                // destabilisiert die STA-Verbindung (Handshake-Timeouts).
+                if (g_server.isAPActive()) {
+                    Serial.println("[WiFi] STA verbunden -> AP wird gestoppt");
+                    g_server.stop();
+                }
                 break;
+            }
             case ARDUINO_EVENT_WIFI_AP_START:
                 Serial.println("[WiFi] AP gestartet");
                 break;
@@ -252,7 +260,7 @@ void ConfigServer::registerRoutes() {
         "/canonical.html", "/validate", "/redirect", "/privacypolicy.pdf"
     };
     for (const char* p : probePaths) {
-        server.on(p, HTTP_GET, [this]() { server.sendHeader("Location", "/", true); server.send(302); });
+        server.on(p, HTTP_GET, [this]() { server.sendHeader("Location", "/", true); server.send(302, "text/plain", ""); });
     }
 
     server.on("/save", HTTP_POST, [this]() {
