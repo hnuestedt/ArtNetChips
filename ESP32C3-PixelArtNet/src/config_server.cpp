@@ -124,16 +124,13 @@ static void registerWiFiEvents() {
                 break;
             }
             case ARDUINO_EVENT_WIFI_AP_START:
-                Serial.println("[WiFi] AP gestartet");
-                break;
             case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
-                Serial.println("[WiFi] AP: Client verbunden");
-                break;
             case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
-                Serial.println("[WiFi] AP: Client getrennt");
-                break;
             case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
-                Serial.println("[WiFi] AP: DHCP-IP an Client vergeben");
+                // Keine Serial-Ausgaben zu AP-Events: Diese Callbacks laufen
+                // im esp_event-Task; printf dort blockiert bei aktiver
+                // USB-CDC-Verbindung und friert den Task ein (Log-Abbruch
+                // beim AP-Stop). Status kommt aus handleClient().
                 break;
             default: break;
         }
@@ -219,7 +216,11 @@ void ConfigServer::stop() {
     server.stop();
     if (apActive) {
         dns.stop();
-        WiFi.softAPdisconnect(true);
+        // Interface-Wechsel nur per mode(): softAPdisconnect(true) hier fuehrte
+        // zum Einfrieren (Deadlock im WiFi-Treiber beim laufenden STA auf dem
+        // gerade gewechselten Kanal). WIFI_STA beendet das AP-Interface sauber,
+        // der STA bleibt unberuehrt.
+        WiFi.mode(WIFI_STA);
         apActive = false;
     }
 }
