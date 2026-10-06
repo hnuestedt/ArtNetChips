@@ -219,29 +219,48 @@ static bool hasStoredCredentials() {
 static uint32_t staReconnectTries = 0;
 static const uint32_t STA_RECONNECT_MAX = 8;
 static bool staReconnectPending = false;
+static uint32_t staReconnectNextMs = 0;
+
+
 
 void requestStaReconnect() {
     staReconnectPending = true;
+    staReconnectNextMs = millis() + 2000;
 }
 
 void serviceStaReconnect() {
     if (!staReconnectPending) return;
-    staReconnectPending = false;
-    if (WiFi.status() == WL_CONNECTED) return;
+    if ((int32_t)(millis() - staReconnectNextMs) < 0) return;
+    if (WiFi.status() == WL_CONNECTED) {
+        staReconnectPending = false;
+        staReconnectTries = 0;
+        return;
+    }
     if (staReconnectTries >= STA_RECONNECT_MAX) {
+        staReconnectPending = false;
         Serial.printf("[WiFi] %u Reconnect-Versuche -> aufgeben\n",
                       (unsigned)staReconnectTries);
-        WiFi.setAutoReconnect(false);
         return;
     }
     staReconnectTries++;
-    Serial.printf("[WiFi] Reconnect-Versuch %u/%u\n",
+    uint32_t backoffMs = 2000u << (staReconnectTries > 4 ? 2 : staReconnectTries - 1);
+    staReconnectNextMs = millis() + backoffMs;
+    Serial.printf("[WiFi] Reconnect-Versuch %u/%u (Driver-Reset)\n",
                   (unsigned)staReconnectTries, (unsigned)STA_RECONNECT_MAX);
     String ssid = g_store.wifiSsid();
     String pass = g_store.wifiPass();
     if (ssid.length() == 0) return;
+    // Auto-Reconnect des Cores aus: Er haelt den Supplicant nach einem
+    // gescheiterten 4-Wege-Handshake im defekten Zustand fest und triggert
+    // endlos weitere fehlgeschlagene Handshakes (parallel zu eigenen
+    // Versuchen). Wir steuern die Verbindung ausschliesslich von hier.
+    WiFi.setAutoReconnect(false);
+    // Kompletter Driver-Reset: Der Supplicant hängt nach Handshake-Fehlern
+    // fest; ein einfaches begin() wird ignoriert. WIFI_OFF reisst alles
+    // ab, danach frischer Start ohne gecachte BSSID.
+    WiFi.mode(WIFI_OFF);
+    delay(150);
     WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
     WiFi.begin(ssid.c_str(), pass.c_str());
 }
 
