@@ -386,6 +386,38 @@ bool ConfigServer::applyConfigFromForm() {
     // WLAN-Verbindung/Konfiguration nicht zerstoert.
     if (server.hasArg("ssid") && ssid.length() > 0 && ssid.length() < 33) {
         if (server.hasArg("pass")) {
+            // Kanal des Routers per Scan ermitteln und den AP auf denselben
+            // Kanal ziehen, bevor der STA startet: Der ESP32-C3 kann im
+            // AP+STA-Betrieb nur auf EINEM Kanal funken. Bleibt der AP auf
+            // einem anderen Kanal, wechselt das Interface beim STA-Versuch
+            // staendig den Kanal (AP abwesam) und der 4-Wege-Handshake
+            // schlaegt fehl (4WAY_HANDSHAKE_TIMEOUT).
+            int targetChannel = 0;
+            if (apActive) {
+                Serial.printf("[WiFi] Suche Kanal von '%s'...\n", ssid.c_str());
+                WiFi.mode(WIFI_AP_STA);
+                int n = WiFi.scanNetworks(false, false, false, 300U);
+                for (int i = 0; i < n; i++) {
+                    if (WiFi.SSID(i) == ssid) {
+                        targetChannel = WiFi.channel(i);
+                        break;
+                    }
+                }
+                if (targetChannel > 0) {
+                    Serial.printf("[WiFi] Router auf Kanal %d -> AP umziehen\n", targetChannel);
+                    WiFi.softAPdisconnect(true);
+                    WiFi.softAPConfig(IPAddress(192, 168, 4, 1),
+                                      IPAddress(192, 168, 4, 1),
+                                      IPAddress(255, 255, 255, 0));
+                    WiFi.softAP(apSsid.c_str(), AP_PASSWORD, targetChannel, 0, 4);
+                    esp_wifi_set_ps(WIFI_PS_NONE);
+                    dns.stop();
+                    dns.start(53, "*", WiFi.softAPIP());
+                } else {
+                    Serial.println("[WiFi] Router nicht im Scan gefunden -> AP laeuft weiter");
+                }
+                WiFi.scanDelete();
+            }
             WiFi.setAutoReconnect(true);
             WiFi.begin(ssid.c_str(), pass.c_str());
             Serial.printf("[WiFi] Neuer STA-Versuch fuer '%s' (max. 5 Versuche)\n",
