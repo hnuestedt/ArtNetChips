@@ -198,37 +198,60 @@ void renderAuto() {
 }
 
 // ------------------------- WiFi / Setup -------------------------
-// true, wenn gespeicherte STA-Credentials in NVS vorhanden sind
+// STA-Credentials liegen im eigenen ConfigStore (NVS-Namespace "pixcfg"),
+// nicht im WiFi-NVS: esp_wifi_get_config() liefert vor dem ersten
+// mode()/begin() ESP_ERR_WIFI_NOT_INIT und der WiFi-NVS-Inhalt ist bei
+// Soft-Resets nicht zuverlaessig verfuegbar.
 static bool hasStoredCredentials() {
-    // esp_wifi_get_config() schlaegt hier fehl (ESP_ERR_WIFI_NOT_INIT):
-    // Der WiFi-Treiber ist vor dem ersten mode()/begin() noch nicht
-    // gestartet. Deshalb die NVS-Keys lesen, in die Arduino die
-    // STA-Credentials speichert (nvs.flash / wifi Konfig).
-    nvs_handle_t nvs;
-    esp_err_t err = nvs_open("nvs.net80211", NVS_READONLY, &nvs);
-    if (err == ESP_OK) {
-        char ssid[33] = {0};
-        size_t len = sizeof(ssid);
-        bool has = false;
-        if (nvs_get_str(nvs, "sta.ssid", ssid, &len) == ESP_OK) {
-            has = ssid[0] != 0;
-            Serial.printf("[WiFi] Gespeicherte SSID: '%s'\n", ssid);
-        }
-        nvs_close(nvs);
-        return has;
-    }
-    Serial.printf("[WiFi] NVS-Lesefehler: %d -> kein STA-Versuch\n", (int)err);
-    return false;
-}
-
-bool connectWiFi() {
-    if (!hasStoredCredentials()) {
+    String ssid = g_store.wifiSsid();
+    if (ssid.length() == 0) {
         Serial.println("[WiFi] Keine Credentials gespeichert -> kein STA-Versuch");
         return false;
     }
+    Serial.printf("[WiFi] Gespeicherte SSID: '%s'\n", ssid.c_str());
+    return true;
+}
+
+// STA neu verbinden: aus dem Main-Task heraus (nicht im Event-Callback).
+// Nach Trennung (z. B. ASSOC_LEAVE durch Mesh/Band-Steering) mit gecacheter
+// BSSID ist der Auto-Reconnect des Cores unzuverlaessig -> aktiver Reconnect
+// mit frischem Scan (bssid = nullptr) und begrenzter Fehlerzahl.
+static uint32_t staReconnectTries = 0;
+static const uint32_t STA_RECONNECT_MAX = 8;
+static bool staReconnectPending = false;
+
+void requestStaReconnect() {
+    staReconnectPending = true;
+}
+
+void serviceStaReconnect() {
+    if (!staReconnectPending) return;
+    staReconnectPending = false;
+    if (WiFi.status() == WL_CONNECTED) return;
+    if (staReconnectTries >= STA_RECONNECT_MAX) {
+        Serial.printf("[WiFi] %u Reconnect-Versuche -> aufgeben\n",
+                      (unsigned)staReconnectTries);
+        WiFi.setAutoReconnect(false);
+        return;
+    }
+    staReconnectTries++;
+    Serial.printf("[WiFi] Reconnect-Versuch %u/%u\n",
+                  (unsigned)staReconnectTries, (unsigned)STA_RECONNECT_MAX);
+    String ssid = g_store.wifiSsid();
+    String pass = g_store.wifiPass();
+    if (ssid.length() == 0) return;
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
-    WiFi.begin();
+    WiFi.begin(ssid.c_str(), pass.c_str());
+}
+
+bool connectWiFi() {
+    if (!hasStoredCredentials()) return false;
+    String ssid = g_store.wifiSsid();
+    String pass = g_store.wifiPass();
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(ssid.c_str(), pass.c_str());
     Serial.printf("[WiFi] Verbinde mit gespeichertem WLAN (Timeout 15 s)\n");
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
@@ -302,6 +325,7 @@ void loop() {
     }
 
     g_server.handleClient();
+    serviceStaReconnect();
 
     if (WiFi.status() == WL_CONNECTED && !artnetActive && g_cfg.mode == MODE_ARTNET) {
         setupArtnetIfNeeded();

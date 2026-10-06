@@ -62,6 +62,12 @@ public:
         prefs.putUChar("speed", cfg.autoSpeed);
     }
 
+    void saveWifi(const String &ssid, const String &pass) {
+        prefs.putString("wssid", ssid);
+        prefs.putString("wpass", pass);
+    }
+    String wifiSsid() { return prefs.getString("wssid", ""); }
+    String wifiPass() { return prefs.getString("wpass", ""); }
     void factoryReset() {
         Config cfg = defaults();
         save(cfg);

@@ -88,22 +88,12 @@ static void registerWiFiEvents() {
                 Serial.printf("[WiFi] STA getrennt! Grund (%d): %s\n",
                               info.wifi_sta_disconnected.reason,
                               wifiReasonStr(info.wifi_sta_disconnected.reason));
-                // Auto-Reconnect des Cores nach 5 Fehlversuchen stoppen:
-                // sonst endlose Schleife (z. B. falsches Passwort).
-                // Grund 8 (ASSOC_LEAVE) zaehlt nicht als Fehlversuch: Das ist
-                // ein normaler Verbindungsabbruch (z. B. Router-Sidekick oder
-                // Signal), kein Auth-/Assoziationsfehler.
-                if (info.wifi_sta_disconnected.reason != 8 &&
-                    ++staFailCount >= STA_MAX_FAILS && WiFi.getMode() & WIFI_STA) {
-                    Serial.printf("[WiFi] %u Fehlversuche -> STA stoppen, zurueck zum AP\n",
-                                  (unsigned)staFailCount);
-                    WiFi.setAutoReconnect(false);
-                    // disconnect(false, false): Credentials in NVS NICHT loeschen,
-                    // sonst ist nach einem Fehlversuch die Konfig weg.
-                    WiFi.disconnect(false, false);
-                    WiFi.mode(WIFI_AP);
-                    staFailCount = 0;
-                }
+                // Keine WiFi-Aufrufe mehr im Event-Task: Nur Reconnect im
+                // Main-Task anfordern. Disconnect/mode hier fuehrten zu
+                // Freezes; der aktive Reconnect mit frischem Scan (keine
+                // gecachte BSSID) behebt die 4WAY_HANDSHAKE_TIMEOUT-Kette
+                // nach ASSOC_LEAVE (Mesh/Band-Steering).
+                requestStaReconnect();
                 break;
             }
             case ARDUINO_EVENT_WIFI_STA_GOT_IP: {
@@ -399,6 +389,10 @@ bool ConfigServer::applyConfigFromForm() {
     // WLAN-Verbindung/Konfiguration nicht zerstoert.
     if (server.hasArg("ssid") && ssid.length() > 0 && ssid.length() < 33) {
         if (server.hasArg("pass")) {
+            // Credentials zusaetzlich im eigenen ConfigStore persistieren:
+            // Der WiFi-NVS des Cores ist bei Soft-Resets nicht zuverlaessig
+            // lesbar,esp_wifi_get_config() schlaegt vor dem Treiberstart fehl.
+            g_store.saveWifi(ssid, pass);
             // Kanal des Routers per Scan ermitteln und den AP auf denselben
             // Kanal ziehen, bevor der STA startet: Der ESP32-C3 kann im
             // AP+STA-Betrieb nur auf EINEM Kanal funken. Bleibt der AP auf
