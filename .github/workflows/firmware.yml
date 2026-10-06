@@ -40,7 +40,8 @@ jobs:
             0x8000 .pio/build/esp32c3/partitions.bin \
             0x10000 .pio/build/esp32c3/firmware.bin
           cp .pio/build/esp32c3/firmware.bin release/firmware.bin
-          sha256sum release/* > release/checksums.txt
+          sha256sum release/firmware.bin release/firmware-esp32c3-full.bin > release/checksums.txt
+          cp release/checksums.txt ../docs/checksums.txt
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -54,6 +55,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           cp release/firmware-esp32c3-full.bin ../docs/
           cp release/checksums.txt ../docs/
+          cp release/firmware.bin release/firmware-esp32c3-full.bin release/checksums.txt ../release/
           sed -i -E "s/\"version\": \"[^\"]*\"/\"version\": \"${GITHUB_SHA::7}\"/" ../docs/manifest.json
           git add ../docs
           git commit -m "Update firmware binaries for ${GITHUB_SHA::7}" || echo "No changes"
