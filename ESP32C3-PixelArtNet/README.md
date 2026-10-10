@@ -6,7 +6,7 @@ Ansteuerung eines Pixel-LED-Streifens (WS2812B) mit drei Betriebsmodi und Webobe
 
 ## Features
 
-- **WLAN**: Verbindet sich mit dem gespeicherten WLAN; wenn keins gespeichert ist oder die Verbindung fehlschlaegt, oeffnet der ESP einen **Access Point mit Captive Portal** (`PixelSetup-xxxx`) zur Konfiguration.
+- **WLAN**: Verbindet sich mit dem gespeicherten WLAN; wenn keins gespeichert ist oder die Verbindung fehlschlaegt, oeffnet der ESP automatisch das **Captive Portal der WiFiManager-Bibliothek** (`PixelSetup-xxxx`) zur WLAN-Einrichtung.
 - **Modi**:
   - **ArtNet**: steuert den Streifen ueber Art-Net (UDP 6454), konfigurierbares Start-Universum & Start-Adresse, automatisch ueber mehrere Universen hinweg.
   - **Statisch**: 1–5 Abschnitte mit je einer RGB-Farbe (Farbwahleditor in der Weboberflaeche).
@@ -56,7 +56,7 @@ pio device monitor      # serielle Konsole (115200 baud)
 
 ## Bedienung
 
-1. Beim ersten Start oeffnet der ESP den AP `PixelSetup-<id>`. Mit diesem verbinden, Konfigurationsseite wird automatisch geoeffnet (Captive Portal) oder `http://192.168.4.1` aufrufen.
+1. Beim ersten Start oeffnet der ESP das WiFiManager-Captive-Portal `PixelSetup-<id>`. Mit diesem verbinden, WLAN auswaehlen und Passwort eingeben; die Konfigurationsseite des ESP ist danach im WLAN unter `http://pixelpixel.local` erreichbar.
 2. WLAN-Zugangsdaten und Pixel-Konfiguration eintragen, Speichern.
 3. Der ESP verbindet sich mit dem WLAN; die Weboberflaeche ist danach unter `http://pixelpixel.local` bzw. der IP aus dem seriellen Monitor erreichbar.
 4. Modus wechseln und konfigurieren; Aenderungen werden sofort angewendet und dauerhaft gespeichert.
