@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_wifi.h>
+#include <WiFiManager.h>
 #include <nvs.h>
 #include <esp_system.h>
 #include <ArtnetWiFi.h>
@@ -198,100 +199,24 @@ void renderAuto() {
 }
 
 // ------------------------- WiFi / Setup -------------------------
-// STA-Credentials liegen im eigenen ConfigStore (NVS-Namespace "pixcfg"),
-// nicht im WiFi-NVS: esp_wifi_get_config() liefert vor dem ersten
-// mode()/begin() ESP_ERR_WIFI_NOT_INIT und der WiFi-NVS-Inhalt ist bei
-// Soft-Resets nicht zuverlaessig verfuegbar.
-static bool hasStoredCredentials() {
-    String ssid = g_store.wifiSsid();
-    if (ssid.length() == 0) {
-        Serial.println("[WiFi] Keine Credentials gespeichert -> kein STA-Versuch");
-        return false;
-    }
-    Serial.printf("[WiFi] Gespeicherte SSID: '%s'\n", ssid.c_str());
-    return true;
-}
-
-// STA neu verbinden: aus dem Main-Task heraus (nicht im Event-Callback).
-// Nach Trennung (z. B. ASSOC_LEAVE durch Mesh/Band-Steering) mit gecacheter
-// BSSID ist der Auto-Reconnect des Cores unzuverlaessig -> aktiver Reconnect
-// mit frischem Scan (bssid = nullptr) und begrenzter Fehlerzahl.
-static uint32_t staReconnectTries = 0;
-static const uint32_t STA_RECONNECT_MAX = 8;
-static bool staReconnectPending = false;
-static uint32_t staReconnectNextMs = 0;
-
-
-
-void requestStaReconnect() {
-    staReconnectPending = true;
-    staReconnectNextMs = millis() + 2000;
-}
-
-void serviceStaReconnect() {
-    if (!staReconnectPending) return;
-    if ((int32_t)(millis() - staReconnectNextMs) < 0) return;
-    if (WiFi.status() == WL_CONNECTED) {
-        staReconnectPending = false;
-        staReconnectTries = 0;
-        return;
-    }
-    if (staReconnectTries >= STA_RECONNECT_MAX) {
-        staReconnectPending = false;
-        Serial.printf("[WiFi] %u Reconnect-Versuche -> aufgeben\n",
-                      (unsigned)staReconnectTries);
-        return;
-    }
-    staReconnectTries++;
-    uint32_t backoffMs = 2000u << (staReconnectTries > 4 ? 2 : staReconnectTries - 1);
-    staReconnectNextMs = millis() + backoffMs;
-    Serial.printf("[WiFi] Reconnect-Versuch %u/%u (Driver-Reset)\n",
-                  (unsigned)staReconnectTries, (unsigned)STA_RECONNECT_MAX);
-    String ssid = g_store.wifiSsid();
-    String pass = g_store.wifiPass();
-    if (ssid.length() == 0) return;
-    // Auto-Reconnect des Cores aus: Er haelt den Supplicant nach einem
-    // gescheiterten 4-Wege-Handshake im defekten Zustand fest und triggert
-    // endlos weitere fehlgeschlagene Handshakes (parallel zu eigenen
-    // Versuchen). Wir steuern die Verbindung ausschliesslich von hier.
-    WiFi.setAutoReconnect(false);
-    // Kompletter Driver-Reset: Der Supplicant hängt nach Handshake-Fehlern
-    // fest; ein einfaches begin() wird ignoriert. WIFI_OFF reisst alles
-    // ab, danach frischer Start ohne gecachte BSSID.
-    WiFi.mode(WIFI_OFF);
-    delay(150);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid.c_str(), pass.c_str());
-}
+// WLAN-Credentials und Captive Portal verwaltet die WiFiManager-Bibliothek
+// (tzapu): autoConnect() verbindet sich mit gespeicherten Credentials und
+// oeffnet nur dann den Konfigurations-AP ("PixelSetup-<id>"), wenn keine
+// vorhanden sind oder die Verbindung fehlschlaegt. STA-Verwaltung und
+// Reconnect-Logik im Projekt entfallen damit komplett.
+static constexpr const char* WFM_AP_SSID_BASE = "PixelSetup-";
 
 bool connectWiFi() {
-    if (!hasStoredCredentials()) return false;
-    String ssid = g_store.wifiSsid();
-    String pass = g_store.wifiPass();
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(ssid.c_str(), pass.c_str());
-    Serial.printf("[WiFi] Verbinde mit gespeichertem WLAN (Timeout 15 s)\n");
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-        delay(250);
-        Serial.print(".");
-    }
-    Serial.println();
-    bool ok = (WiFi.status() == WL_CONNECTED);
+    WiFiManager wm;
+    String apSsid = String(WFM_AP_SSID_BASE) +
+                    String((uint32_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
+    wm.setConfigPortalTimeout(180);  // Portal nach 3 min ohne Eingabe schliessen
+    bool ok = wm.autoConnect(apSsid.c_str());
     if (!ok) {
-        Serial.printf("[WiFi] STA-Verbindung fehlgeschlagen (Status %d)", (int)WiFi.status());
-        Serial.println(" -> WiFi.stop() fuer sauberen AP-Start");
-        // Wichtig: WiFi sauber stoppen, sonst startet der AP-Mode mit
-        // defektem TCP/IP-Interface (bekannter Core-Bug, arduino-esp32 #7232).
-        // ABER: disconnect(false, ...) nutzen -- der zweite Parameter 'true'
-        // haette die gespeicherten Credentials aus NVS geloescht!
-        WiFi.persistent(true);
-        WiFi.disconnect(false, false);
-        WiFi.mode(WIFI_OFF);
-        delay(500);
+        Serial.println("[WiFi] Keine Verbindung, Portal-Timeout -> Neustart");
+        ESP.restart();
     }
-    return ok;
+    return true;
 }
 
 void setup() {
@@ -307,19 +232,15 @@ void setup() {
     g_store.load(g_cfg);
 
     // WiFi zuerst starten (lwIP initialisieren), erst danach ArtNet/UDP.
-    // Ohne gespeicherte Credentials direkt in den AP-Modus (Core-Bug #7232 umgehen).
-    bool staOk = connectWiFi();
+    // WiFiManager oeffnet bei fehlenden Credentials automatisch sein Captive
+    // Portal; nach Rueckkehr aus connectWiFi() ist STA immer verbunden.
+    connectWiFi();
 
     applyRuntimeConfig();
 
-    if (staOk) {
-        Serial.printf("WLAN verbunden: %s  IP: %s\n", WiFi.SSID().c_str(),
-                      WiFi.localIP().toString().c_str());
-        g_server.begin(false);
-    } else {
-        Serial.println("Kein WLAN verfuegbar -> AP-Modus mit Captive Portal");
-        g_server.begin(true);
-    }
+    Serial.printf("WLAN verbunden: %s  IP: %s\n", WiFi.SSID().c_str(),
+                  WiFi.localIP().toString().c_str());
+    g_server.begin(false);
 
     Serial.println("Setup fertig.");
 }
@@ -344,7 +265,6 @@ void loop() {
     }
 
     g_server.handleClient();
-    serviceStaReconnect();
 
     if (WiFi.status() == WL_CONNECTED && !artnetActive && g_cfg.mode == MODE_ARTNET) {
         setupArtnetIfNeeded();

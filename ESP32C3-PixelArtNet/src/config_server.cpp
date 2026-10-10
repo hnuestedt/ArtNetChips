@@ -84,18 +84,11 @@ static void registerWiFiEvents() {
                 // Router trennt (ASSOC_LEAVE), Reconnect-Handshake schlaegt fehl.
                 esp_wifi_set_ps(WIFI_PS_NONE);
                 break;
-            case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
+            case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
                 Serial.printf("[WiFi] STA getrennt! Grund (%d): %s\n",
                               info.wifi_sta_disconnected.reason,
                               wifiReasonStr(info.wifi_sta_disconnected.reason));
-                // Keine WiFi-Aufrufe mehr im Event-Task: Nur Reconnect im
-                // Main-Task anfordern. Disconnect/mode hier fuehrten zu
-                // Freezes; der aktive Reconnect mit frischem Scan (keine
-                // gecachte BSSID) behebt die 4WAY_HANDSHAKE_TIMEOUT-Kette
-                // nach ASSOC_LEAVE (Mesh/Band-Steering).
-                requestStaReconnect();
                 break;
-            }
             case ARDUINO_EVENT_WIFI_STA_GOT_IP: {
                 staFailCount = 0;
                 Serial.printf("[WiFi] STA hat IP: %s (GW: %s)\n",
@@ -288,19 +281,13 @@ void ConfigServer::registerRoutes() {
 }
 
 String ConfigServer::renderForm() {
-    wifi_config_t conf;
-    String savedSsid;
-    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
-        savedSsid = String(reinterpret_cast<const char*>(conf.sta.ssid));
-    }
+    String savedSsid = WiFi.SSID();
 
     String s;
     s.reserve(2048);
     s += "<form id='cfg'><fieldset><legend>WLAN</legend>";
-    s += "<label for='ssid'>WLAN-Netzwerk (SSID)</label>";
-    s += "<input name='ssid' type='text' value='" + savedSsid + "' placeholder='SSID'>";
-    s += "<label for='pass'>Passwort</label><input name='pass' type='password' placeholder='unveraendert lassen'>";
-    s += "<small>Aktuell verbunden: " + (savedSsid.isEmpty() ? String("kein") : savedSsid) + "</small>";
+    s += "<small>Aktuell verbunden: " + (savedSsid.isEmpty() ? String("kein") : savedSsid) +
+         " &ndash; WLAN-Zugangsdaten werden beim Boot ueber das WiFiManager-Captive-Portal eingerichtet.</small>";
     s += "</fieldset>";
 
     s += "<fieldset><legend>Pixel-Streifen</legend>";
@@ -363,8 +350,6 @@ bool ConfigServer::parseColor(const String &value, uint32_t &out) {
 
 bool ConfigServer::applyConfigFromForm() {
     Config c = g_cfg;
-    String ssid = server.arg("ssid");
-    String pass = server.arg("pass");
 
     c.numLeds = constrain((uint16_t)server.arg("numLeds").toInt(), (uint16_t)1, (uint16_t)MAX_NUM_LEDS);
     c.brightness = constrain((uint16_t)server.arg("bright").toInt(), (uint16_t)0, (uint16_t)255);
@@ -383,55 +368,7 @@ bool ConfigServer::applyConfigFromForm() {
     g_store.save(g_cfg);
     applyRuntimeConfig();
 
-    // WLAN-Credentials nur dann anfassen, wenn der Nutzer sie im Formular
-    // aktiv uebermittelt hat. Leere Felder = unverändert (Platzhalter-Logik),
-    // damit z. B. eine Farbaenderung im statischen Modus die bestehende
-    // WLAN-Verbindung/Konfiguration nicht zerstoert.
-    if (server.hasArg("ssid") && ssid.length() > 0 && ssid.length() < 33) {
-        if (server.hasArg("pass")) {
-            // Credentials zusaetzlich im eigenen ConfigStore persistieren:
-            // Der WiFi-NVS des Cores ist bei Soft-Resets nicht zuverlaessig
-            // lesbar,esp_wifi_get_config() schlaegt vor dem Treiberstart fehl.
-            g_store.saveWifi(ssid, pass);
-            // Kanal des Routers per Scan ermitteln und den AP auf denselben
-            // Kanal ziehen, bevor der STA startet: Der ESP32-C3 kann im
-            // AP+STA-Betrieb nur auf EINEM Kanal funken. Bleibt der AP auf
-            // einem anderen Kanal, wechselt das Interface beim STA-Versuch
-            // staendig den Kanal (AP abwesam) und der 4-Wege-Handshake
-            // schlaegt fehl (4WAY_HANDSHAKE_TIMEOUT).
-            int targetChannel = 0;
-            if (apActive) {
-                Serial.printf("[WiFi] Suche Kanal von '%s'...\n", ssid.c_str());
-                WiFi.mode(WIFI_AP_STA);
-                int n = WiFi.scanNetworks(false, false, false, 300U);
-                for (int i = 0; i < n; i++) {
-                    if (WiFi.SSID(i) == ssid) {
-                        targetChannel = WiFi.channel(i);
-                        break;
-                    }
-                }
-                if (targetChannel > 0) {
-                    Serial.printf("[WiFi] Router auf Kanal %d -> AP umziehen\n", targetChannel);
-                    WiFi.softAPdisconnect(true);
-                    WiFi.softAPConfig(IPAddress(192, 168, 4, 1),
-                                      IPAddress(192, 168, 4, 1),
-                                      IPAddress(255, 255, 255, 0));
-                    WiFi.softAP(apSsid.c_str(), AP_PASSWORD, targetChannel, 0, 4);
-                    esp_wifi_set_ps(WIFI_PS_NONE);
-                    dns.stop();
-                    dns.start(53, "*", WiFi.softAPIP());
-                } else {
-                    Serial.println("[WiFi] Router nicht im Scan gefunden -> AP laeuft weiter");
-                }
-                WiFi.scanDelete();
-            }
-            WiFi.setAutoReconnect(true);
-            WiFi.begin(ssid.c_str(), pass.c_str());
-            Serial.printf("[WiFi] Neuer STA-Versuch fuer '%s' (max. 5 Versuche)\n",
-                          ssid.c_str());
-        } else {
-            Serial.println("[WiFi] Passwort-Feld fehlt im Formular -> Credentials unveraendert");
-        }
-    }
+    // WLAN-Credentials werden ausschliesslich ueber das WiFiManager-Captive-
+    // Portal konfiguriert, nicht mehr ueber dieses Formular.
     return true;
 }
