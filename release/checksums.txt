@@ -1,2 +1,2 @@
-fb049f400c7caaebc65c7ff812cae46b5fe084eb93f4eaec9c1faa1419e65326  release/firmware.bin
-6525b2fc74b8633fc7a66703654ed4feb72653ba906ce4495effd96a7532c355  release/firmware-esp32c3-full.bin
+b53d43fc69038bdc345a86d83b62c3f1fa8a2fc6eaaf50ddeb78920bbebff30d  release/firmware.bin
+ba5c5d35d174de26cba4ff0caa216c36898e06f30d773f375356413f613ae404  release/firmware-esp32c3-full.bin
