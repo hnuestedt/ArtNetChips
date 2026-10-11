@@ -12,17 +12,32 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete artifacts older than 14 days
+      - name: Keep only artifacts of the last 3 runs per workflow
         env:
           GH_TOKEN: ${{ github.token }}
+          KEEP: "3"
         run: |
-          CUTOFF=$(date -u -d '14 days ago' '+%Y-%m-%dT%H:%M:%SZ')
-          echo "Deleting artifacts created before $CUTOFF"
-          IDS=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
-            --jq ".[] | select(.created_at < \"$CUTOFF\") | .id")
-          if [ -z "$IDS" ]; then
-            echo "No old artifacts found."
-          else
-            echo "$IDS" | xargs -r -n1 -I{} gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/{}"
-            echo "Done."
-          fi
+          set -eu
+          REPO="${GITHUB_REPOSITORY}"
+          KEEP_IDS=$(mktemp)
+
+          # Collect the IDs of the newest KEEP runs of each workflow
+          for wf in $(gh api "repos/${REPO}/actions/workflows" --jq '.workflows[].id'); do
+            gh api "repos/${REPO}/actions/workflows/${wf}/runs?per_page=${KEEP}" \
+              --jq '.workflow_runs[].id' >> "$KEEP_IDS" || true
+          done
+          sort -u "$KEEP_IDS" -o "$KEEP_IDS"
+          echo "Keeping artifacts of run IDs: $(tr '\n' ' ' < "$KEEP_IDS")"
+
+          gh api --paginate "repos/${REPO}/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | [.id, (.workflow_run.id // 0)] | @tsv' \
+            | while IFS='\t' read -r art_id run_id; do
+                if [ "$run_id" != "0" ] && grep -qx "$run_id" "$KEEP_IDS"; then
+                  echo "Keeping artifact $art_id (run $run_id)"
+                else
+                  echo "Deleting artifact $art_id (run $run_id)"
+                  gh api -X DELETE "repos/${REPO}/actions/artifacts/${art_id}"
+                fi
+              done
+
+          echo "Cleanup finished."
