@@ -1,6 +1,10 @@
 name: Cleanup old artifacts
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cleanup-artifacts.yml'
   schedule:
     - cron: '0 3 * * 1' # every Monday 03:00 UTC
   workflow_dispatch:
