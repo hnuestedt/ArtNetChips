@@ -25,7 +25,6 @@ jobs:
           REPO="${GITHUB_REPOSITORY}"
           KEEP_IDS=$(mktemp)
 
-          # Collect the IDs of the newest KEEP runs of each workflow
           for wf in $(gh api "repos/${REPO}/actions/workflows" --jq '.workflows[].id'); do
             gh api "repos/${REPO}/actions/workflows/${wf}/runs?per_page=${KEEP}" \
               --jq '.workflow_runs[].id' >> "$KEEP_IDS" || true
@@ -35,8 +34,8 @@ jobs:
 
           gh api --paginate "repos/${REPO}/actions/artifacts?per_page=100" \
             --jq '.artifacts[] | [.id, (.workflow_run.id // 0)] | @tsv' \
-            | while IFS='\t' read -r art_id run_id; do
-                if [ "$run_id" != "0" ] && grep -qx "$run_id" "$KEEP_IDS"; then
+            | while IFS=$'\t' read -r art_id run_id; do
+                if [ "$run_id" != "0" ] && [ -n "$run_id" ] && grep -qx "$run_id" "$KEEP_IDS"; then
                   echo "Keeping artifact $art_id (run $run_id)"
                 else
                   echo "Deleting artifact $art_id (run $run_id)"
